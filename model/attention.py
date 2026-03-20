@@ -21,6 +21,11 @@ class SelfAttention(nn.Module):
         score = Q @ K.transpose(-2, -1)
         #scale
         score = score/ (C**0.5)
+
+        #causal mask(tril = lower triangle)
+        mask = torch.tril(torch.ones(T,T)).to(x.device)
+        score = score.masked_fill(mask==0, float('-inf'))
+
         #softmax
         wights = F.softmax(score, dim=-1)
 
