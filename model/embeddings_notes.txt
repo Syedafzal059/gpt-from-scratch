@@ -1,0 +1,210 @@
+================================================================================
+EMBEDDINGS MODULE NOTES
+================================================================================
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+What are embeddings?
+  Embeddings are dense vector representations of discrete tokens. Each token
+  (word, character, or subword) is mapped to a fixed-size continuous vector
+  of real numbers. Example: token "cat" -> [0.2, -0.5, 0.8, ..., 0.1] (d_model dims)
+
+Why token indices cannot be directly used:
+  - Indices are integers (0, 1, 2, ...). Neural networks expect continuous values
+  - Index 5 and index 6 have no semantic relationship; the model cannot learn
+    that "cat" (id=5) and "kitten" (id=6) are related
+  - One-hot encoding of indices is sparse and high-dimensional (vocab_size dims)
+  - Embeddings compress to embedding_dim dimensions and allow the model to
+    learn semantic similarity (similar words -> similar vectors)
+
+Role in transformer models:
+  Embeddings are the first layer. Raw token IDs enter here and exit as dense
+  vectors. These vectors flow through attention and feedforward layers. The
+  model learns embedding weights during training so that useful representations
+  emerge (e.g., synonyms cluster together).
+
+================================================================================
+2. TOKEN EMBEDDING
+================================================================================
+
+How it works:
+  nn.Embedding(vocab_size, embedding_dim) is a lookup table. For each token
+  index, it returns the corresponding row from a matrix of shape
+  (vocab_size, embedding_dim). No computation, just indexing.
+
+  Forward: embedding_layer(token_ids) -> dense vectors
+
+Shape transformation:
+  Input:  (batch_size, seq_len)       e.g. (2, 5)  -> 2 sequences, 5 tokens each
+  Output: (batch_size, seq_len, embedding_dim)     e.g. (2, 5, 8)
+
+  Each integer in the input is replaced by a vector of length embedding_dim.
+  The embedding layer applies the same lookup to every position in the tensor.
+
+Example:
+  Input:  tensor([[3, 7, 1], [9, 2, 5]])   shape (2, 3)
+  Output: shape (2, 3, 8)   -> 6 vectors of dim 8 (one per token)
+
+================================================================================
+3. POSITIONAL EMBEDDING
+================================================================================
+
+Why transformers need positional information:
+  Attention is permutation-invariant: it treats "dog bites man" and "man bites
+  dog" the same if we only have token embeddings. The model has no notion of
+  order. Positional embeddings inject "where" each token sits in the sequence.
+
+How positional embeddings work:
+  - We assign a unique vector to each position (0, 1, 2, ..., seq_len-1)
+  - Same as token embedding: nn.Embedding(max_len, embedding_dim)
+  - For input of length 5, we use positions [0,1,2,3,4] and look up their vectors
+  - These vectors are added to token embeddings (additive combination)
+
+Why token + positional embedding:
+  - Token embedding: "what" (semantic meaning)
+  - Positional embedding: "where" (order in sequence)
+  - Combined: each token gets a representation that encodes both meaning and
+    position. The model can then learn to attend differently based on position.
+
+================================================================================
+4. KEY CONCEPTS
+================================================================================
+
+embedding_dim (d_model):
+  The size of each embedding vector. Common values: 256, 512, 768 (GPT-2 small).
+  Larger = more capacity but more parameters and compute. Must match across
+  token embedding, positional embedding, and downstream layers.
+
+vocab_size:
+  Number of unique tokens in the vocabulary. Determines the number of rows in
+  the token embedding matrix. Example: 50,257 for GPT-2, 256 for char-level.
+
+sequence length (seq_len):
+  Number of tokens in one sequence. Max length the model can process. Padding
+  or truncation may be applied to reach a fixed seq_len for batching.
+
+batch size:
+  Number of sequences processed together. Input shape (batch_size, seq_len).
+  Embeddings must produce (batch_size, seq_len, embedding_dim) so each
+  sequence in the batch gets its own embeddings.
+
+================================================================================
+5. COMMON MISTAKES (IMPORTANT)
+================================================================================
+
+Mistake 1: Forgetting positional embeddings
+  - Without them, "I love you" and "you love I" are identical to the model
+  - Result: model cannot learn order-dependent tasks (e.g., next-token prediction
+    where position matters)
+  - Fix: Always add positional embeddings to token embeddings before attention
+
+Mistake 2: Shape mismatch between token and positional embeddings
+  - token_out: (2, 5, 8)   pos_out: (1, 5, 8)
+  - Adding them: (2, 5, 8) + (1, 5, 8) broadcasts, but if pos_out were (5, 8)
+    you get errors or wrong semantics
+  - Fix: Ensure both have (batch_size, seq_len, embedding_dim)
+
+Mistake 3: Not handling batch dimension properly
+  - Wrong: positions = torch.arange(seq_len)  -> shape (5,)
+  - Wrong: positions.unsqueeze(0) -> (1, 5) -> embedding output (1, 5, 8)
+  - For batch_size=2, we need (2, 5, 8). The (1, 5) case fails assertions.
+  - Fix: positions = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
+    -> (2, 5) -> embedding output (2, 5, 8)
+
+Mistake 4: Not using unsqueeze and expand correctly
+  - torch.arange(5) -> [0,1,2,3,4], shape (5,)
+  - unsqueeze(0) -> shape (1, 5)  (add batch dim)
+  - expand(2, -1) -> shape (2, 5)  (copy rows for each batch item)
+  - Without expand: only 1 row of positions -> output (1, 5, 8), batch dim wrong
+  - -1 in expand means "keep that dimension as is"
+
+Mistake 5: Confusing embedding_dim with vocab_size
+  - vocab_size: how many tokens exist (e.g., 50,000). Size of the lookup table.
+  - embedding_dim: length of each vector (e.g., 768). Size of each row.
+  - Matrix shape: (vocab_size, embedding_dim) = (50000, 768)
+  - Wrong: using vocab_size as the vector length, or embedding_dim as table size
+
+================================================================================
+6. DO'S AND DON'TS
+================================================================================
+
+DO:
+  - Maintain consistent tensor shapes: (B, T, D) throughout the embedding stage
+  - Validate output shapes during testing (assertions in test_embeddings)
+  - Keep embeddings modular: separate TokenEmbedding and PositionalEmbedding
+  - Understand tensor transformations: unsqueeze, expand, device handling
+  - Use device=x.device when creating positions so it works on CPU and GPU
+
+DON'T:
+  - Hardcode dimensions: pass vocab_size, embedding_dim, max_len from config
+  - Ignore batch dimension: positional embedding must output (B, T, D) not (1, T, D)
+  - Skip testing: shape bugs cause silent errors in downstream layers
+  - Treat embeddings as simple lookup without understanding: the learned
+    vectors are crucial for model quality; random init vs pretrained matters
+
+================================================================================
+7. EXAMPLES
+================================================================================
+
+Example 1: Token embedding
+  Input tokens:  tensor([[9, 7, 18, 1, 9], [7, 6, 15, 1, 10]])
+  Input shape:   (2, 5)   [batch_size=2, seq_len=5]
+  Token embedding output shape: (2, 5, 8)   [embedding_dim=8]
+  Each of the 10 token indices is replaced by a vector of length 8.
+
+Example 2: Positional embedding
+  Input shape:   (2, 5)
+  Positions:     [[0,1,2,3,4], [0,1,2,3,4]]   shape (2, 5)
+  Positional embedding output shape: (2, 5, 8)
+  Same position vectors for both sequences (position 0 same everywhere).
+
+Example 3: Combined embedding
+  token_out:  (2, 5, 8)   - semantic vectors per token
+  pos_out:    (2, 5, 8)   - position vectors per position
+  combined = token_out + pos_out   shape (2, 5, 8)
+  Element-wise addition: each token gets its meaning + its position info.
+
+================================================================================
+8. KEY LEARNINGS
+================================================================================
+
+What embeddings represent:
+  - Token embeddings: learned distributed representations. Similar tokens
+    (e.g., "run", "running") often have similar vectors after training.
+  - Positional embeddings: learned representations of position. The model
+    discovers useful position encodings (e.g., "near start" vs "near end").
+
+Why they are learnable:
+  - Random init at start. During training, gradients update the embedding
+    matrix. The model learns which token/position combinations help the loss.
+  - Pretrained embeddings (e.g., from GPT-2) already encode useful structure.
+
+Why positional information is critical:
+  - Language is sequential. "Not good" vs "good not" mean different things.
+  - Without position, the model cannot distinguish them. With position, it can.
+
+================================================================================
+9. FUTURE IMPROVEMENTS
+================================================================================
+
+Sinusoidal positional encoding:
+  - Original Transformer used fixed sin/cos functions: PE(pos, 2i) = sin(pos/10000^(2i/d))
+  - No learned parameters; can extrapolate to longer sequences than seen in training
+  - GPT-2 uses learned instead: more flexible but may not generalize to longer seqs
+
+Learned vs fixed embeddings:
+  - Learned: model adapts positions to the task (GPT-2, BERT)
+  - Fixed (sinusoidal): no extra params, better length generalization
+  - Hybrid: learned for short range, sinusoidal for long range
+
+Scaling to large vocabularies:
+  - Large vocab (e.g., 50K) -> large embedding matrix. Consider:
+  - Tied embeddings: share weights between input embedding and output (LM head)
+  - Vocabulary pruning: remove rare tokens, use <UNK>
+  - Subword tokenization: smaller effective vocab, fewer parameters
+
+================================================================================
+END OF NOTES
+================================================================================

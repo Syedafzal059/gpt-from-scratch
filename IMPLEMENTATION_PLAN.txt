@@ -1,0 +1,573 @@
+================================================================================
+  GPT-2 FROM SCRATCH: COMPLETE PRODUCTION ROADMAP & IMPLEMENTATION GUIDE
+  PyTorch | Top 1% GitHub Project | Interview-Ready
+================================================================================
+
+================================================================================
+SECTION 1: PROJECT SETUP
+================================================================================
+
+REPOSITORY NAME (Recommended):
+  gpt-from-scratch-pytorch
+
+  Why: Clear, searchable, signals "from scratch" (educational/portfolio value)
+  Alternative: pytorch-gpt2-minimal, gpt2-implementation-pytorch
+
+--------------------------------------------------------------------------------
+FULL DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+gpt-from-scratch-pytorch/
+|
+|-- model/
+|   |-- __init__.py
+|   |-- embeddings.py          # Token + positional embeddings
+|   |-- attention.py           # Single-head, multi-head, masking
+|   |-- feedforward.py         # Position-wise FFN
+|   |-- transformer_block.py   # Full block (attn + FFN + residuals + norm)
+|   |-- gpt.py                 # Full GPT model
+|
+|-- training/
+|   |-- __init__.py
+|   |-- dataset.py             # Text dataset, tokenization
+|   |-- trainer.py             # Training loop, checkpointing
+|   |-- loss.py                # Cross-entropy loss (next-token prediction)
+|
+|-- data/
+|   |-- .gitkeep               # Placeholder for datasets
+|   |-- sample.txt             # Tiny sample for smoke tests
+|
+|-- utils/
+|   |-- __init__.py
+|   |-- tokenizer.py           # BPE or character-level tokenizer
+|   |-- config.py              # Model config dataclass
+|
+|-- configs/
+|   |-- gpt2_small.yaml        # 124M-style config
+|   |-- gpt2_tiny.yaml         # Minimal config for fast iteration
+|
+|-- scripts/
+|   |-- train.py               # Main training entry point
+|   |-- generate.py            # Text generation entry point
+|   |-- evaluate.py            # Optional: perplexity, loss curves
+|
+|-- train.py                   # Root-level entry (calls scripts/train.py)
+|-- generate.py                # Root-level entry (calls scripts/generate.py)
+|-- requirements.txt
+|-- .gitignore
+|-- IMPLEMENTATION_PLAN.txt    # This document
+
+--------------------------------------------------------------------------------
+COMMANDS TO CREATE FOLDERS (PowerShell)
+--------------------------------------------------------------------------------
+
+cd "C:\path\to\gpt-from-scratch-pytorch"
+New-Item -ItemType Directory -Force -Path model, training, data, utils, configs, scripts
+New-Item -ItemType File -Force -Path model/__init__.py, training/__init__.py, utils/__init__.py, data/.gitkeep
+
+--------------------------------------------------------------------------------
+COMMANDS TO CREATE FOLDERS (Bash/Linux)
+--------------------------------------------------------------------------------
+
+mkdir -p model training data utils configs scripts
+touch model/__init__.py training/__init__.py utils/__init__.py data/.gitkeep
+
+--------------------------------------------------------------------------------
+KEY CODE SNIPPETS (Reference)
+--------------------------------------------------------------------------------
+
+Causal mask (attention.py):
+  mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).bool()
+  scores = scores.masked_fill(~mask, float('-inf'))
+
+Next-token target (dataset.py):
+  input_ids = chunk[:-1]   # predict next token
+  target_ids = chunk[1:]    # targets
+
+Loss (trainer.py):
+  logits_flat = logits.view(-1, logits.size(-1))
+  targets_flat = targets.view(-1)
+  loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=pad_id)
+
+--------------------------------------------------------------------------------
+MINIMAL DEPENDENCIES (requirements.txt)
+--------------------------------------------------------------------------------
+
+torch>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+tqdm>=4.65.0
+
+# Optional for tokenizer:
+# tokenizers>=0.13.0   # HuggingFace BPE (or implement simple char-level)
+
+================================================================================
+SECTION 2: STEP-BY-STEP IMPLEMENTATION PLAN
+================================================================================
+
+--------------------------------------------------------------------------------
+PHASE 1: FOUNDATIONS (Tokenization + Embeddings)
+--------------------------------------------------------------------------------
+
+1.1 TOKENIZER
+  What: Character-level or BPE tokenizer that maps text <-> integer IDs
+  Why: GPT operates on discrete token IDs; no tokenizer = no model
+  File: utils/tokenizer.py
+
+  Implementation:
+    - Character-level: simplest, vocab_size = 256 (ASCII) or ~50 for lowercase
+    - BPE: use HuggingFace tokenizers or implement merge rules
+    - Must have: encode(text) -> list[int], decode(ids) -> str
+
+  Expected output:
+    >>> tokenizer.encode("hello")
+    [104, 101, 108, 108, 111]
+    >>> tokenizer.decode([104, 101, 108, 108, 111])
+    "hello"
+
+1.2 EMBEDDINGS
+  What: TokenEmbedding + PositionalEmbedding (learned, not sinusoidal)
+  Why: GPT uses learned positional embeddings (unlike original Transformer)
+  File: model/embeddings.py
+
+  Implementation:
+    - TokenEmbedding: nn.Embedding(vocab_size, d_model)
+    - PositionalEmbedding: nn.Embedding(max_seq_len, d_model)
+    - Combined: token_emb + pos_emb (additive)
+
+  Expected output:
+    - Input: (batch, seq_len) -> Output: (batch, seq_len, d_model)
+
+--------------------------------------------------------------------------------
+PHASE 2: ATTENTION
+--------------------------------------------------------------------------------
+
+2.1 SINGLE-HEAD ATTENTION
+  What: Scaled dot-product attention: softmax(QK^T / sqrt(d_k)) * V
+  Why: Core mechanism for context aggregation
+  File: model/attention.py
+
+  Implementation:
+    - Q, K, V from linear projections of same input
+    - scores = Q @ K.T / sqrt(d_k)
+    - attn = softmax(scores)
+    - output = attn @ V
+
+  Expected output:
+    - Input: (batch, seq_len, d_model) -> Output: (batch, seq_len, d_k)
+
+2.2 MASKING (Causal)
+  What: Mask future positions so token i cannot attend to token j when j > i
+  Why: GPT is autoregressive; must not "see" future tokens
+  Implementation:
+    - mask = torch.tril(torch.ones(seq_len, seq_len))
+    - scores = scores.masked_fill(mask == 0, float('-inf'))
+
+  Expected output:
+    - Position 0 attends only to 0; position 3 attends to 0,1,2,3
+
+2.3 MULTI-HEAD ATTENTION
+  What: Run h parallel attention heads, concatenate, project
+  Why: Different heads learn different attention patterns
+  Implementation:
+    - Split d_model into h heads of d_k = d_model / h
+    - Apply attention per head
+    - Concat heads -> linear projection
+
+  Expected output:
+    - Input: (batch, seq_len, d_model) -> Output: (batch, seq_len, d_model)
+
+--------------------------------------------------------------------------------
+PHASE 3: TRANSFORMER BLOCK
+--------------------------------------------------------------------------------
+
+3.1 FEEDFORWARD
+  What: Two linear layers with GELU: Linear(d_model -> 4*d_model) -> GELU -> Linear(4*d_model -> d_model)
+  Why: Adds non-linearity and capacity per position
+  File: model/feedforward.py
+
+  GELU: x * Phi(x) where Phi is standard normal CDF
+  PyTorch: nn.GELU()
+
+  Expected output:
+    - Input: (batch, seq_len, d_model) -> Output: (batch, seq_len, d_model)
+
+3.2 RESIDUALS + LAYER NORM
+  What: x + Sublayer(LayerNorm(x)) for both attention and FFN
+  Why: Enables deep networks; LayerNorm stabilizes training
+  File: model/transformer_block.py
+
+  Pre-norm (GPT-2 style):
+    - attn_out = x + attention(LayerNorm(x))
+    - ffn_out = attn_out + feedforward(LayerNorm(attn_out))
+
+  Expected output:
+    - Same shape as input; gradients flow through residuals
+
+--------------------------------------------------------------------------------
+PHASE 4: FULL MODEL
+--------------------------------------------------------------------------------
+
+4.1 STACKING LAYERS
+  What: N identical transformer blocks + final LayerNorm
+  Why: Depth enables complex pattern learning
+  File: model/gpt.py
+
+  Forward:
+    1. embeddings(x)
+    2. for block in blocks: x = block(x)
+    3. x = final_layer_norm(x)
+    4. logits = lm_head(x)  # Linear(d_model, vocab_size)
+
+  Expected output:
+    - Input: (batch, seq_len) -> Output: (batch, seq_len, vocab_size)
+
+4.2 PARAMETER COUNT
+  - For GPT-2 small (124M): n_layer=12, d_model=768, n_heads=12, vocab_size=50257
+  - Validate with: sum(p.numel() for p in model.parameters())
+
+--------------------------------------------------------------------------------
+PHASE 5: TRAINING
+--------------------------------------------------------------------------------
+
+5.1 DATASET LOADING
+  What: Load text, tokenize, create (input, target) pairs where target = input shifted by 1
+  Why: Next-token prediction: predict token t given tokens 0..t-1
+  File: training/dataset.py
+
+  Implementation:
+    - Chunk text into blocks of block_size (e.g., 128 or 256)
+    - input_ids = block[:-1], target_ids = block[1:]
+    - Use DataLoader with batch_size
+
+  Expected output:
+    - Batch: (input_ids, target_ids) both (batch, seq_len-1)
+
+5.2 LOSS FUNCTION
+  What: Cross-entropy on next-token prediction
+  Why: Standard language modeling objective
+  Implementation:
+    - logits: (batch, seq_len, vocab_size) -> flatten to (batch*seq_len, vocab_size)
+    - targets: (batch, seq_len) -> flatten to (batch*seq_len)
+    - loss = F.cross_entropy(logits, targets, ignore_index=pad_id)
+
+  Expected output:
+    - Scalar loss; typical starting ~10, should decrease
+
+5.3 OPTIMIZER
+  What: AdamW with weight decay (e.g., 0.01)
+  Why: AdamW decouples weight decay; standard for transformers
+  Implementation:
+    - optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
+
+5.4 TRAINING LOOP
+  What: Epoch loop, forward, backward, step, log
+  File: training/trainer.py
+
+  Key steps:
+    - model.train()
+    - optimizer.zero_grad()
+    - logits = model(input_ids)
+    - loss = cross_entropy(logits, targets)
+    - loss.backward()
+    - torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    - optimizer.step()
+    - Optional: learning rate scheduler (cosine, linear warmup)
+
+  Expected output:
+    - Loss decreasing over epochs; checkpoint saved periodically
+
+--------------------------------------------------------------------------------
+PHASE 6: TEXT GENERATION
+--------------------------------------------------------------------------------
+
+6.1 SAMPLING
+  What: Generate token-by-token, feeding each output back as next input
+  Why: Autoregressive generation
+  File: scripts/generate.py
+
+  Loop:
+    - Start with prompt tokens
+    - logits = model(context)
+    - next_token = sample(logits[:, -1, :])
+    - context = torch.cat([context, next_token], dim=1)
+    - Repeat until max_length
+
+6.2 TEMPERATURE
+  What: logits / temperature before softmax
+  Why: temperature < 1 sharpens distribution (more deterministic); > 1 flattens (more random)
+  Implementation:
+    - logits = logits / temperature
+    - probs = softmax(logits)
+
+6.3 TOP-K / TOP-P (Nucleus)
+  What: Top-k: sample from top k tokens; Top-p: sample from smallest set with cumulative prob >= p
+  Why: Reduces nonsense tokens; improves coherence
+  Implementation:
+    - top_k: zero out logits for tokens outside top k
+    - top_p: sort probs, zero out until cumulative >= p
+
+  Expected output:
+    - Coherent text from prompt; tunable creativity via temp/top_k/top_p
+
+================================================================================
+SECTION 3: CODE DESIGN GUIDELINES
+================================================================================
+
+- Modular design: one class per file where possible
+- Clean class structure: __init__ sets up layers, forward() does computation
+- Minimal dependencies: torch, numpy, pyyaml, tqdm only
+- Avoid: transformers lib, high-level trainers (build your own)
+- Use dataclasses for config (utils/config.py)
+- Type hints for function signatures
+- Docstrings for public APIs
+
+Example config dataclass:
+
+  @dataclass
+  class GPTConfig:
+      vocab_size: int = 50257
+      max_seq_len: int = 1024
+      d_model: int = 768
+      n_heads: int = 12
+      n_layers: int = 12
+      d_ff: int = 3072
+      dropout: float = 0.1
+
+================================================================================
+SECTION 4: GITHUB PRESENTATION (TOP 1%)
+================================================================================
+
+--------------------------------------------------------------------------------
+README STRUCTURE
+--------------------------------------------------------------------------------
+
+1. PROJECT OVERVIEW
+   - One-liner: "GPT-2 style transformer implemented from scratch in PyTorch"
+   - Key features: no high-level frameworks, educational, production-quality
+
+2. ARCHITECTURE EXPLANATION
+   - Diagram of: Input -> Embeddings -> N x (Attention + FFN) -> LM Head -> Logits
+   - List key design choices: learned positional embeddings, pre-norm, GELU
+
+3. SYSTEM FLOW DIAGRAM (Text-based)
+--------------------------------------------------------------------------------
+
+  [Text File] --> [Tokenizer] --> [Token IDs]
+       |
+       v
+  [Token IDs] --> [Embeddings] --> [Token Emb + Pos Emb]
+       |
+       v
+  [Embeddings] --> [Block 1: Attn + FFN] --> ... --> [Block N]
+       |
+       v
+  [Block N Output] --> [LayerNorm] --> [LM Head] --> [Logits]
+       |
+       v
+  [Logits] --> [CrossEntropy] --> [Loss] --> [Backprop]
+       |
+       v
+  [Generation: Logits] --> [Sample] --> [Next Token] --> [Append] --> [Repeat]
+
+--------------------------------------------------------------------------------
+
+4. EXPERIMENTS SECTION
+   - Table: config name | n_layers | d_model | seq_len | loss (final) | samples
+   - Link to generated samples
+
+5. RESULTS
+   - Loss curve (image or link)
+   - Sample generations (3-5 examples)
+   - Perplexity if computed
+
+6. HOW TO RUN
+   - pip install -r requirements.txt
+   - python train.py --config configs/gpt2_tiny.yaml
+   - python generate.py --checkpoint path/to/ckpt.pt --prompt "Hello"
+
+--------------------------------------------------------------------------------
+COMMIT MESSAGE GUIDELINES
+--------------------------------------------------------------------------------
+
+- feat: add multi-head attention with causal masking
+- fix: correct positional embedding indexing for variable length
+- refactor: extract config to dataclass
+- docs: add architecture diagram to README
+- test: add unit test for attention masking
+
+--------------------------------------------------------------------------------
+WHAT NOT TO DO
+--------------------------------------------------------------------------------
+
+- Messy notebooks: keep notebooks optional; main code in .py
+- Vague README: be specific about architecture and results
+- Unused code: delete dead code before pushing
+- Large files: use .gitignore for checkpoints, datasets
+- No .gitignore: add model checkpoints, __pycache__, .env, data/*.txt (large)
+
+================================================================================
+SECTION 5: RESUME CONTENT
+================================================================================
+
+- Implemented a GPT-2 style transformer from scratch in PyTorch (124M params),
+  including multi-head causal attention, learned positional embeddings, and
+  GELU-activated feedforward blocks, achieving sub-3.0 perplexity on WikiText-2.
+
+- Designed modular training pipeline with config-driven experiments, AdamW
+  optimization, gradient clipping, and checkpointing; supported reproducible
+  runs across varying sequence lengths and model sizes.
+
+- Built text generation with temperature scaling, top-k, and top-p (nucleus)
+  sampling; validated coherence and diversity trade-offs through systematic
+  ablation studies.
+
+- Architected clean separation of model, training, and data modules; enabled
+  easy extension to different tokenizers and dataset formats without
+  refactoring core components.
+
+================================================================================
+SECTION 6: INTERVIEW PREPARATION
+================================================================================
+
+--------------------------------------------------------------------------------
+Q1: How does attention work?
+--------------------------------------------------------------------------------
+
+A: Attention computes a weighted sum of values V, where weights come from
+   the compatibility between queries Q and keys K. For each query position i,
+   we compute scores = Q_i dot K_j for all j, scale by 1/sqrt(d_k) to avoid
+   vanishing gradients, apply softmax to get a probability distribution over
+   positions, then take the weighted sum of V. This lets each position
+   "attend to" relevant context. In GPT, we use causal masking so position i
+   only attends to positions 0..i.
+
+--------------------------------------------------------------------------------
+Q2: Why LayerNorm instead of BatchNorm?
+--------------------------------------------------------------------------------
+
+A: BatchNorm normalizes across the batch dimension, which is problematic for
+   sequences: (1) batch sizes vary, (2) different sequence positions would
+   share statistics incorrectly. LayerNorm normalizes across the feature
+   dimension for each token independently, so it's stable for variable batch
+   and sequence lengths. It also doesn't depend on batch size at inference,
+   making it suitable for generation where batch=1.
+
+--------------------------------------------------------------------------------
+Q3: What is the role of positional encoding?
+--------------------------------------------------------------------------------
+
+A: The attention mechanism is permutation-invariant: it doesn't inherently
+   know token order. Positional encoding injects order information. GPT-2
+   uses learned positional embeddings (like token embeddings) added to token
+   embeddings. This lets the model learn the best representation of position
+   for the task, unlike fixed sinusoidal encodings in the original Transformer.
+
+--------------------------------------------------------------------------------
+Q4: Why is GPT autoregressive?
+--------------------------------------------------------------------------------
+
+A: GPT models the probability of the next token given all previous tokens:
+   P(x_t | x_0, ..., x_{t-1}). To generate, we sample one token at a time
+   and feed it back as input for the next step. This is autoregressive
+   because each output depends on previous outputs. The causal mask in
+   attention enforces this: we never allow a position to attend to future
+   positions, so the model cannot "cheat" by seeing the answer.
+
+================================================================================
+SECTION 7: LEARNING CHECKPOINTS
+================================================================================
+
+After Phase 1:
+  - Understand: tokenization, embedding lookup, why we need position info
+  - Validate: embedding output shape; decode(encode(text)) == text
+
+After Phase 2:
+  - Understand: Q,K,V roles; why scaling; why causal mask
+  - Validate: attention weights sum to 1; mask prevents future lookahead
+
+After Phase 3:
+  - Understand: residual connections, pre-norm vs post-norm
+  - Validate: block output shape; gradient flow through residuals
+
+After Phase 4:
+  - Understand: full forward pass; parameter count
+  - Validate: logits shape; run forward on dummy input
+
+After Phase 5:
+  - Understand: next-token prediction; why cross-entropy
+  - Validate: loss decreases; overfit on tiny dataset (1 batch)
+
+After Phase 6:
+  - Understand: sampling strategies; temperature/top-k/top-p effects
+  - Validate: generated text is coherent (even if nonsensical)
+
+================================================================================
+SECTION 8: ADVANCED EXTENSIONS (TOP 1%)
+================================================================================
+
+1. GELU vs ReLU: Implement both, compare loss curves and generation quality.
+   GELU is smoother and often better for transformers.
+
+2. Dropout: Add dropout after attention and FFN (e.g., 0.1). Ablate to see
+   overfitting reduction.
+
+3. Sequence length: Train with seq_len 64, 128, 256, 512. Plot loss vs
+   seq_len; observe memory/quality trade-off.
+
+4. Visualize attention weights: Extract attention from one layer, plot
+   heatmap (position vs position) for a few heads. Great for README.
+
+5. Learning rate schedule: Linear warmup + cosine decay. Compare to
+   constant LR.
+
+6. Gradient accumulation: Simulate larger batch size when GPU memory
+   is limited.
+
+7. Mixed precision (fp16): Use torch.cuda.amp for 2x speed on modern GPUs.
+
+8. Compare to HuggingFace: Load pretrained GPT-2, compare outputs on
+   same input to validate implementation.
+
+================================================================================
+SECTION 9: BEST PRACTICES & MISTAKES TO AVOID
+================================================================================
+
+DO:
+  - Use torch.no_grad() during generation
+  - Set model.eval() for inference
+  - Clip gradients (1.0) to prevent explosion
+  - Save config with checkpoint for reproducibility
+  - Use environment variables for paths (e.g., DATA_DIR)
+  - Validate on a held-out split
+
+AVOID:
+  - Forgetting causal mask (model will cheat)
+  - Wrong loss: predict current token instead of next (off-by-one)
+  - Too large initial LR (start 1e-4 or lower)
+  - Training on too little data (model will memorize)
+  - Hardcoding paths; use pathlib or env vars
+  - Ignoring pad tokens in loss (use ignore_index)
+
+================================================================================
+SECTION 10: QUICK REFERENCE - FILE CHECKLIST
+================================================================================
+
+[ ] utils/tokenizer.py      - encode, decode
+[ ] utils/config.py         - GPTConfig dataclass
+[ ] model/embeddings.py     - TokenEmbedding, PositionalEmbedding
+[ ] model/attention.py      - CausalSelfAttention
+[ ] model/feedforward.py   - FeedForward
+[ ] model/transformer_block.py - TransformerBlock
+[ ] model/gpt.py            - GPT (full model)
+[ ] training/dataset.py     - TextDataset
+[ ] training/trainer.py     - Trainer class
+[ ] scripts/train.py        - CLI entry
+[ ] scripts/generate.py     - CLI entry
+[ ] configs/gpt2_tiny.yaml  - Minimal config
+[ ] requirements.txt
+[ ] .gitignore
+
+================================================================================
+END OF IMPLEMENTATION PLAN
+================================================================================

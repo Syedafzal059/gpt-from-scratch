@@ -1,0 +1,146 @@
+================================================================================
+TOKENIZER IMPLEMENTATION NOTES
+================================================================================
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+What is tokenization?
+  Tokenization is the process of splitting raw text into smaller units (tokens)
+  that a model can process. Neural networks operate on numbers, not text. So we
+  must map text -> tokens -> integer IDs before feeding into a model.
+
+Why is it required in NLP/LLMs?
+  - Models need fixed-size inputs; tokens provide discrete units
+  - Vocabulary defines the model's "alphabet"; all inputs must map to vocab IDs
+  - Tokenization affects model capacity: too coarse = lose detail; too fine = long sequences
+
+Character-level vs word-level tokenization:
+  - Character-level: Each character is a token. "cat" -> ['c','a','t']
+    Pros: Tiny vocab (~50-256), no out-of-vocabulary (OOV) problem
+    Cons: Very long sequences, model must learn word structure from scratch
+
+  - Word-level: Each word is a token. "Hello world!" -> ['Hello','world','!']
+    Pros: Shorter sequences, each token carries more meaning
+    Cons: Large vocab, OOV for unseen words (need <UNK>)
+
+  This project implements both: CharTokenizer and WordTokenizer.
+
+================================================================================
+2. COMMON MISTAKES (IMPORTANT)
+================================================================================
+
+Mistake 1: Using .split() is incorrect
+  - .split() splits only on whitespace and drops punctuation
+  - Example: "Hello, world!" with .split() -> ["Hello,", "world!"]
+  - Problem: "Hello," and "Hello" are different tokens; vocab explodes
+  - Worse: "world!" and "world" are different; "don't" becomes one token
+  - Correct approach: Separate words and punctuation. "Hello, world!" ->
+    ["Hello", ",", "world", "!"] so punctuation is reusable across contexts
+
+  Bad:  "don't" -> ["don't"]     (one rare token)
+  Good: "don't" -> ["don", "'", "t"]  (subword; or ["don't"] if kept as word)
+
+  This implementation uses re.findall(r"\w+|[^\w\s]") to avoid .split().
+
+Mistake 2: Ignoring punctuation is harmful
+  - Punctuation carries meaning: "Let's eat!" vs "Let's eat." vs "Let's eat?"
+  - If you strip it: all three become "Let's eat" -> same representation
+  - Model loses sentence type (exclamation, question, statement)
+  - In code generation, punctuation is critical: "(" vs ")" vs ","
+
+  Bad:  "Hello world" (no punctuation) -> model cannot learn sentence boundaries
+  Good: ["Hello", ",", " ", "world", "!"] or keep punctuation as tokens
+
+Mistake 3: <UNK> token handling is necessary
+  - At inference, the model will see words not in the training vocabulary
+  - Without <UNK>: stoi["unknownword"] raises KeyError -> crash
+  - With <UNK>: stoi.get("unknownword", stoi["<UNK>"]) returns <UNK> ID -> safe
+
+  Example:
+    Training vocab: ["Hello", "world", "!"]
+    At inference: encode("Hello GPT!") -> "GPT" not in vocab
+    Without <UNK>: KeyError
+    With <UNK>: [0, 3, 2]  (Hello, <UNK>, !)
+
+  Decode must handle <UNK> too: when decoding, <UNK> produces a placeholder
+  so the user knows something was unknown.
+
+================================================================================
+4. EXAMPLES
+================================================================================
+
+Example 1: WordTokenizer
+  Raw text:        "Hello Afzal! This is GPT."
+  Tokenized:       ["Hello", "Afzal", "!", "This", "is", "GPT", "."]
+  Vocab (sample):  [".", "!", "Afzal", "GPT", "Hello", "This", "is", "<UNK>"]
+  Encoded:         [4, 2, 1, 5, 6, 3, 0]   (indices depend on sort order)
+  Decoded:         "Hello Afzal ! This is GPT ."
+
+Example 2: WordTokenizer with OOV
+  Raw text:        "Hello GPT!"
+  Vocab from:      "Hello Afzal! This is GPT."  (so "Hello","GPT","!" exist)
+  Tokenized:       ["Hello", "GPT", "!"]
+  Encoded:         [4, 3, 1]
+  Decoded:         "Hello GPT !"
+
+  If vocab lacked "GPT":
+  Encoded:         [4, 7, 1]   (7 = <UNK>)
+  Decoded:         "Hello <UNK> !"
+
+Example 3: CharTokenizer
+  Raw text:        "hello"
+  Tokenized:       ['h','e','l','l','o']
+  Vocab:           [' ','e','h','l','o','w']  (if built from "hello world")
+  Encoded:         [2, 1, 3, 3, 4]
+  Decoded:         "hello"
+
+================================================================================
+4. KEY LEARNINGS
+================================================================================
+
+What this implementation teaches about LLMs:
+  - Tokenization is the first step; quality here affects everything downstream
+  - Vocabulary is fixed at training time; OOV must be handled explicitly
+  - encode/decode must be inverses: decode(encode(text)) should match original
+    (except for spacing/UNK placeholders)
+
+Limitations of word-level tokenization:
+  - Vocab size grows with corpus: 10K-100K+ words is common
+  - Rare words become <UNK>; model cannot represent them
+  - Morphology ignored: "running" and "run" are separate tokens
+  - No sharing between similar words: "cat" and "cats" are unrelated
+
+Why modern models use subword tokenization (BPE, WordPiece, SentencePiece):
+  - Subword splits rare words into known pieces: "unhappiness" -> ["un","happiness"]
+  - Small vocab (e.g. 50K) can represent huge vocabulary via composition
+  - Handles OOV: "GPT" might be ["G","PT"] or ["GP","T"] if not in vocab
+  - Balances character-level (no OOV) and word-level (efficient sequences)
+
+================================================================================
+6. FUTURE IMPROVEMENTS
+================================================================================
+
+BPE / subword tokenization:
+  - Implement Byte Pair Encoding: start with chars, iteratively merge frequent
+    pairs. "aaabaa" -> merge "aa" -> "aab a" -> etc.
+  - Or use HuggingFace tokenizers library for production BPE
+
+Handling large vocabulary:
+  - Limit vocab size: keep top N frequent tokens, rest -> <UNK>
+  - Or use subword so vocab stays small while coverage grows
+
+Case normalization:
+  - Lowercase all text before tokenization to reduce vocab: "Hello" and "hello"
+    become one token. Trade-off: loses capitalization (names, "I", etc.)
+  - Optional: add a "capitalize" or case feature as separate token
+
+Additional improvements:
+  - Save/load tokenizer (stoi, itos, vocab) to disk for reuse
+  - Add special tokens: <PAD>, <BOS>, <EOS> for training
+  - Handle numbers: keep as-is, or normalize "123" -> "<NUM>"
+
+================================================================================
+END OF NOTES
+================================================================================

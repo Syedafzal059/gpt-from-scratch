@@ -1,0 +1,15 @@
+# Minimal config for fast iteration and smoke tests
+vocab_size: 256
+max_seq_len: 128
+d_model: 256
+n_heads: 4
+n_layers: 4
+d_ff: 1024
+dropout: 0.1
+
+# Training
+batch_size: 32
+learning_rate: 1.0e-4
+weight_decay: 0.01
+max_epochs: 10
+block_size: 64

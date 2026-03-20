@@ -1,0 +1,15 @@
+# GPT-2 small style (124M params)
+vocab_size: 50257
+max_seq_len: 1024
+d_model: 768
+n_heads: 12
+n_layers: 12
+d_ff: 3072
+dropout: 0.1
+
+# Training
+batch_size: 8
+learning_rate: 6.0e-5
+weight_decay: 0.01
+max_epochs: 3
+block_size: 256
