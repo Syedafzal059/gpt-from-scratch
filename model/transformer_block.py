@@ -20,3 +20,16 @@ class TransformerBlock(nn.Module):
         # FFN + Residual
         x = x+ self.ffn(self.ln2(x))
         return x
+
+
+if __name__ == "__main__":
+    B, T, C = 2, 5, 8
+    num_heads = 2
+
+    x = torch.randn(B, T, C)
+
+    block = TransformerBlock(C, num_heads)
+    out = block(x)
+
+    print("Input shape:", x.shape)
+    print("Output shape:", out.shape)
