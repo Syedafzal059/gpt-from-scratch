@@ -10,6 +10,9 @@ class CharTokenizer:
     def encode(self, text):
         return [self.stoi[ch] for ch in text]
 
+    def decode(self, token_ids):
+        return "".join(self.itos[i] for i in token_ids)
+
 
 
 

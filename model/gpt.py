@@ -44,4 +44,21 @@ class GPTModel(nn.Module):
         logits = self.head(x) #(B, T, vocab_size)
 
         return logits
-             
+
+
+
+if __name__ == "__main__":
+    vocab_size = 100
+    embed_dim = 32
+    num_heads = 4
+    num_layers = 2
+    max_len = 50
+
+    model = GPTModel(vocab_size, embed_dim, num_heads, num_layers, max_len)
+
+    x = torch.randint(0, vocab_size, (2, 10))  # (B, T)
+
+    logits = model(x)
+
+    print("Input:", x.shape)
+    print("Output:", logits.shape) # torch.Size([2, 10, 100])
