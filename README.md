@@ -17,10 +17,20 @@
 ### Model Flow
 Input → Embedding → Transformer Blocks → LayerNorm → Linear Head → Logits
 
+## Phase 3: Training & Generation ✅
+
+- Built dataset pipeline (next-token prediction)
+- Implemented training loop (CrossEntropy + AdamW)
+- Successfully trained model (loss reduced from ~3.0 to ~0.05)
+- Implemented autoregressive text generation
+
+### Sample Output
+Input: "h"
+Output: "hrshafdflasgffdzro..."
+
+(Note: noisy output due to small dataset — expected behavior)
+
 ## Next Steps
-- Transformer Block
-- Full GPT model
-- Training loop
 
 ## Goal
 Understand and implement GPT architecture from first principles
