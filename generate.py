@@ -47,6 +47,6 @@ if __name__ == "__main__":
     model = GPTModel(tokenizer.vocab_size, embed_dim, num_heads, num_layers, block_size)
     model.to(device)
 
-    output = generate(model, tokenizer, start_text="h", max_new_tokens=50, block_size=block_size, device=device)
+    output = generate(model, tokenizer, start_text="Afz", max_new_tokens=5, block_size=block_size, device=device)
 
     print(output)
