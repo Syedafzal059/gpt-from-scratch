@@ -11,7 +11,7 @@ class RotaryEmbedding(nn.Module):
         self.inv_freq = 1.0/(base**(torch.arange(0,dim, 2).float()/dim))
         #different speed for different dimensions
 
-    def get_angels(self, seq_len, device):
+    def get_angles(self, seq_len, device):
         #output(θ)=position×speed(θp,i​=p⋅si​)
         
         #create positions
@@ -24,7 +24,7 @@ class RotaryEmbedding(nn.Module):
         return angles
     
     def get_sin_cos(self, seq_len, device):
-        angles = self.get_angels(seq_len, device)
+        angles = self.get_angles(seq_len, device)
         
         sin = torch.sin(angles)
         cos = torch.cos(angles)
