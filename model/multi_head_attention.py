@@ -13,8 +13,6 @@
 # (B, T, num_heads, head_dim)
 # Where:
 # C = num_heads × head_dim
-
-from turtle import forward
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
