@@ -63,6 +63,24 @@ Without a cache, each new token requires a forward pass over the **entire** pref
 python -m pytest tests/test_kv_cache.py -v
 ```
 
+### Inference benchmark (example)
+
+`tests/test_kv_cache_metrics.py` compares the same workload with KV cache on vs off (512 new tokens, `block_size=4096`, CPU in this run). Your numbers will vary by hardware; the screenshot below is one representative run.
+
+![KV cache vs no-cache benchmark terminal output](docs/images/kv-cache-benchmark.png)
+
+| | KV cache ON | KV cache OFF |
+|---|-------------|--------------|
+| **Total time** | 535 ms | 1920 ms |
+| **Per new token** | ~1.05 ms | ~3.75 ms |
+| **Speedup (no cache / cache)** | **~3.6×** | — |
+
+Reproduce the report:
+
+```bash
+pytest tests/test_kv_cache_metrics.py::test_kv_cache_timing_metrics_report -v -s
+```
+
 ---
 
 ## Quick Start
@@ -130,7 +148,8 @@ gpt-from-scratch/
 │       ├── rope.py           # RotaryEmbedding: angles, sin/cos (RoPE building blocks)
 │       └── types.py          # Shared enums / small types (optional)
 ├── tests/
-│   ├── test_kv_cache.py      # KV cache vs full-forward logit parity
+│   ├── test_kv_cache.py          # KV cache vs full-forward logit parity
+│   ├── test_kv_cache_metrics.py  # Timing / speedup; same output with fixed seed
 │   └── test_position_rope.py # Tests for position / RoPE (expand as you wire it)
 ├── utils/tokenizer/
 │   ├── char_tokenizer.py
@@ -221,6 +240,12 @@ pytest tests/ -v
 
 # KV cache parity only
 pytest tests/test_kv_cache.py -v
+
+# Timing + speedup report (print metrics: pytest -s; uses 512 new tokens, ~seconds on CPU)
+pytest tests/test_kv_cache_metrics.py -v -s
+
+# Skip the slow timing benchmark; still runs the same-text KV vs no-cache test
+pytest tests/test_kv_cache_metrics.py -v -m "not slow"
 ```
 
 ---
