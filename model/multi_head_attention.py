@@ -33,16 +33,38 @@ class MultiHeadAttention(nn.Module):
 
         self.out = nn.Linear(embedding_dim, embedding_dim)
 
-    def forward(self, x):
-        B, T, C = x.shape
+    def forward(self, x, past_kv=None, position_offset=0):
+        """
+        x: (B, T_new, C)
+        past_kv: None or (K_past, V_past), each (B, num_heads, T_past, head_dim)
+        position_offset: global index of x[:, 0, :] in the full sequence.
+        Returns:
+            out: (B, T_new, C)
+            present_kv: (K, V) each (B, num_heads, T_past + T_new, head_dim)
+        """
+        B, T_new, C = x.shape
         Q = self.query(x)
         K = self.key(x)
         V = self.value(x)        
 
         # reshape for multi head
-        Q = Q.view(B, T, self.num_head, self.head_dim).transpose(1,2)
-        K = K.view(B, T, self.num_head, self.head_dim).transpose(1,2)
-        V = V.view(B, T, self.num_head, self.head_dim).transpose(1,2)
+        Q = Q.view(B, T_new, self.num_head, self.head_dim).transpose(1,2)
+        K = K.view(B, T_new, self.num_head, self.head_dim).transpose(1,2)
+        V = V.view(B, T_new, self.num_head, self.head_dim).transpose(1,2)
+
+
+        #kv cache 
+        if past_kv is not None:
+            K_past, V_past = past_kv
+            K = torch.cat([K_past, K], dim=2)
+            V = torch.cat([V_past, V], dim=2)
+        T_past = 0 if past_kv is None else past_kv[0].shape[2] 
+        T_total = T_past + T_new
+
+
+
+
+
         # In PyTorch, the @ operator (matrix multiplication) ALWAYS works on the "LAST TWO" dimensions.
         # Q  = (B, num_heads, T, head_dim)
         # K  = (B, num_heads, T, head_dim)
@@ -50,9 +72,19 @@ class MultiHeadAttention(nn.Module):
         # (T × head_dim) @ (head_dim × T) → (T × T)
         scores = Q @ K.transpose(-2,-1)
         scores = scores /(self.head_dim**0.5)
-        #causal mask 
-        mask = torch.tril(torch.ones(T, T)).to(x.device)
-        scores = scores.masked_fill(mask==0, float('-inf'))
+
+        device = x.device
+        key_global = torch.empty(T_total, device=device, dtype=torch.long)
+        if T_past > 0:
+            key_global[:T_past]=torch.arange(T_past, device=device)
+        if T_new >0:
+            key_global[T_past:] = position_offset + torch.arange(T_new, device=device)
+        query_global = position_offset + torch.arange(T_new, device=device)
+
+        causal_mask = key_global.unsqueeze(0) <= query_global.unsqueeze(-1)
+        scores = scores.masked_fill(~causal_mask, float("-inf"))
+
+
 
         weights = F.softmax(scores, dim=-1)
         out = weights @ V #(B, num_head, T, head_dim)
@@ -63,14 +95,15 @@ class MultiHeadAttention(nn.Module):
         #   [[ [1,2], [7,8] ]]  → (num_heads=2, head_dim=2)
         # After reshape:
         #   [1,2,7,8] → (num_heads*head_dim=4)
-        out = out.reshape(B, T, C) #(B, T, num_head, head_dim) -> (B, T, C)
-        return self.out(out)  #output = W × input + b, now W are learnable parameters
+        out = out.reshape(B, T_new, C) #(B, T, num_head, head_dim) -> (B, T, C)
+        present_kv = (K,V)
+        return self.out(out), present_kv  #output = W × input + b, now W are learnable parameters
 
 
 if __name__ =="__main__":
     x = torch.randn(2, 5, 8)
 
     model = MultiHeadAttention(embedding_dim=8, num_heads=2)
-    out = model(x)
+    out, _ = model(x)
 
     print(out.shape)  # should be (2, 5, 8)
