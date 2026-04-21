@@ -14,12 +14,18 @@ class TransformerBlock(nn.Module):
         self.ln2  = nn.LayerNorm(embed_dim) 
 
 
-    def forward(self, x):
+    def forward(self, x, past_kv = None, position_offset=0):
+
+        attn_out, present_kv = self.attn(
+            self.ln1(x),
+            past_kv = past_kv,
+            position_offset=position_offset,
+        )
         # Attention =Residual
-        x = x+ self.attn(self.ln1(x))
+        x = x+ attn_out
         # FFN + Residual
         x = x+ self.ffn(self.ln2(x))
-        return x
+        return x, present_kv
 
 
 if __name__ == "__main__":
@@ -29,7 +35,8 @@ if __name__ == "__main__":
     x = torch.randn(B, T, C)
 
     block = TransformerBlock(C, num_heads)
-    out = block(x)
+    out, kv = block(x)
 
     print("Input shape:", x.shape)
     print("Output shape:", out.shape)
+    print("K shape:", kv[0].shape, "V shape:", kv[1].shape)

@@ -20,28 +20,33 @@ class GPTModel(nn.Module):
         self.head = nn.Linear(embed_dim, vocab_size)
 
 
-    def forward(self, x):
+    def forward(self, x, past_kv_list=None, position_offset=0, use_cache=False):
         B, T = x.shape
         
         # Token Embedding 
         tok_emb = self.token_embedding(x)
 
         # Positional Embedding
-        pos = torch.arange(T, device=x.device)
+        pos = torch.arange(T, device=x.device) + position_offset
         pos_emb = self.positional_embedding(pos)
 
         x = tok_emb + pos_emb #(B, T, C)
 
         # Transformer block 
-        for block in self.blocks:
-            x = block(x)
-
+        presents = [] if use_cache else None
+        for i, block in enumerate(self.blocks):
+            past_i = past_kv_list[i] if past_kv_list is not None else None
+            x, present_kv = block(x, past_kv=past_i, position_offset=position_offset)
+            if use_cache:
+                presents.append(present_kv)
         #Final norms
         x = self.ln_f(x)
+        logits = self.head(x)
 
+        if use_cache:
+            return logits, presents
+        
         #Output Logits
-
-        logits = self.head(x) #(B, T, vocab_size)
 
         return logits
 

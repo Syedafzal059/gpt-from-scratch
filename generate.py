@@ -1,17 +1,43 @@
-import torch 
+import torch
 from model.gpt import GPTModel
 from utils.tokenizer import CharTokenizer
 
 
-def generate(model, tokenizer, start_text, max_new_tokens=50, block_size=32, device="cpu"):
+def generate(
+    model, 
+    tokenizer, 
+    start_text, 
+    max_new_tokens=50, 
+    block_size=32, 
+    device="cpu",
+    use_kv_cache=True,
+):
     model.eval()
 
     tokens = tokenizer.encode(start_text)
     x = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
 
+    past = None
     for _ in range(max_new_tokens):
-        context = x[:, -block_size:]  # Sliding window: only last block_size tokens
-        logits = model(context)  # (1, T, vocab_size)
+        if use_kv_cache and x.shape[1] <= block_size:
+            if past is None:
+                logits, past = model(
+                    x,
+                    past_kv_list=None,
+                    position_offset=0,
+                    use_cache=True,
+                )
+            else:
+                logits, past = model(
+                    x[:, -1:],
+                    past_kv_list=past,
+                    position_offset=x.shape[1] - 1,
+                    use_cache=True,
+                )
+        else:
+            context = x[:, -block_size:]  # Sliding window: only last block_size tokens
+            logits = model(context)  # (1, T, vocab_size)
+            past = None
 
         #Take last token prediction
         logits = logits[:, -1, :] #(1, vocab_size)
