@@ -4,23 +4,29 @@ from utils.tokenizer import CharTokenizer
 
 
 def generate(
-    model, 
-    tokenizer, 
-    start_text, 
-    max_new_tokens=50, 
-    block_size=32, 
+    model,
+    tokenizer,
+    start_text,
+    max_new_tokens=50,
+    block_size=32,
     device="cpu",
     use_kv_cache=True,
+    verbose=False,
 ):
     model.eval()
 
+    # Step 1: Convert text → tokens
     tokens = tokenizer.encode(start_text)
+    # Example: "Afz" → [3, 5, 7]
     x = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+    # shape: (1, T)
 
-    past = None
-    for _ in range(max_new_tokens):
+    past = None  # KV cache
+    for step in range(max_new_tokens):
         if use_kv_cache and x.shape[1] <= block_size:
+            # First step → no cache yet
             if past is None:
+                # Send full input
                 logits, past = model(
                     x,
                     past_kv_list=None,
@@ -28,9 +34,10 @@ def generate(
                     use_cache=True,
                 )
             else:
+                # Next steps → only send last token
                 logits, past = model(
-                    x[:, -1:],
-                    past_kv_list=past,
+                    x[:, -1:],         #only new token
+                    past_kv_list=past, # reuse old kv
                     position_offset=x.shape[1] - 1,
                     use_cache=True,
                 )
@@ -50,6 +57,9 @@ def generate(
 
         #Append to input
         x = torch.cat([x, next_token], dim=1) #(1, T+1)
+
+        if verbose:
+            print(f"Step {step}: sequence =", x.tolist())
 
     # Decode output
     output_tokens = x[0].tolist()
@@ -73,6 +83,14 @@ if __name__ == "__main__":
     model = GPTModel(tokenizer.vocab_size, embed_dim, num_heads, num_layers, block_size)
     model.to(device)
 
-    output = generate(model, tokenizer, start_text="Afz", max_new_tokens=5, block_size=block_size, device=device)
+    output = generate(
+        model,
+        tokenizer,
+        start_text="Afz",
+        max_new_tokens=5,
+        block_size=block_size,
+        device=device,
+        verbose=True,
+    )
 
     print(output)
